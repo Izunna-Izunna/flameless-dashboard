@@ -1,0 +1,20 @@
+[Unit]
+Description=FLAMELESS Generator Monitor – Backend API
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=flameless
+WorkingDirectory=/home/flameless/flameless-dashboard/backend
+ExecStart=/home/flameless/flameless-dashboard/backend/.venv/bin/python3 \
+          /home/flameless/flameless-dashboard/backend/app.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=FLAMELESS_HOST=0.0.0.0
+Environment=FLAMELESS_PORT=5000
+
+[Install]
+WantedBy=multi-user.target

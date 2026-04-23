@@ -1,0 +1,17 @@
+[Unit]
+Description=FLAMELESS Generator Monitor – Frontend Static Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=flameless
+WorkingDirectory=/home/flameless/flameless-dashboard/frontend
+ExecStart=/usr/bin/env npx serve -s dist -l 3000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

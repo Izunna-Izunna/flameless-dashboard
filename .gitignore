@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+backend/.venv/
+backend/*.log
+backend/flameless.db
+
+# Node / frontend build
+frontend/node_modules/
+frontend/dist/
+frontend/*.log
+
+# Data / runtime
+data/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
