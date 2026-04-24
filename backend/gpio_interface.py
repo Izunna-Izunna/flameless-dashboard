@@ -2,17 +2,23 @@
 FLAMELESS Generator – GPIO / I2C Hardware Interface
 ====================================================
 Auto-detects real hardware on boot:
-  • ADS1115 (I2C)  → pressure (A0), NTC temp (A1), ACS712 current (A2), voltage (A3)
-  • DS18B20 (1-Wire GPIO4) → coolant temperature (preferred over NTC)
-  • RPi.GPIO        → relay outputs (GPIO17/27/22/5), choke PWM (GPIO18)
-                      digital inputs: MQ-4 gas leak (GPIO23), E-Stop NC (GPIO24)
+  • ADS1115 (I2C 0x48)  → A0 = pressure (Toyota 89458-22010, ratiometric 0.5–4.5 V on 5 V)
+                           A1 = MQ-4 analog out (0–5 V gas concentration)
+                           A2 = ZMPT101B AC voltage sensor
+                           A3 = SCT-013 100 A CT clamp (AC current)
+  • DS18B20 (1-Wire GPIO4) → coolant temperature (sole temperature sensor)
+  • RPi.GPIO        → relay outputs (GPIO17/27/22/5*), choke PWM (GPIO18)
+                      digital inputs: MQ-4 DO gas leak (GPIO23), E-Stop NC (GPIO24)
                       Hall-effect RPM (GPIO25, interrupt-driven)
+                      *GPIO5 = Spare relay (reserved for future expansion)
 
 If any library is missing or hardware initialisation fails the module falls
 back transparently to simulation (sensor_mock_v2.EnhancedSensorGenerator).
 The public class name stays EnhancedSensorGenerator so app.py only needs its
 import line updated:
     from gpio_interface import EnhancedSensorGenerator
+
+Wiring diagram revision: v2.0 (2026-04-23)
 """
 
 import atexit
@@ -27,7 +33,7 @@ log = logging.getLogger(__name__)
 PIN_GAS_SOLENOID = 17   # relay output – gas valve
 PIN_STARTER      = 27   # relay output – starter motor
 PIN_ENGINE_STOP  = 22   # relay output – engine stop solenoid
-PIN_ALARM        = 5    # relay output – alarm buzzer
+PIN_SPARE        = 5    # relay output – Spare / future expansion (was alarm buzzer, removed in Rev 2.0)
 
 PIN_SERVO_CHOKE  = 18   # PWM – choke servo (50 Hz)
 
@@ -36,38 +42,43 @@ PIN_ESTOP        = 24   # digital input – E-Stop NC  (HIGH = clear, LOW = pres
 PIN_RPM          = 25   # digital input – Hall-effect RPM sensor
 
 # ── Sensor calibration constants ─────────────────────────────────────────────
-# ACS712-30A: sensitivity 66 mV/A, midpoint 2.5 V at 0 A
-ACS712_SENSITIVITY = 0.066
-ACS712_VREF        = 2.5
 
-# NTC 10K thermistor – Steinhart–Hart β-parameter model
-NTC_R_PULLUP = 10_000.0   # pull-up resistor value (Ω)
-NTC_R0       = 10_000.0   # resistance at 25 °C
-NTC_T0       = 298.15     # 25 °C in Kelvin
-NTC_BETA     = 3950.0     # β coefficient for generic 10K NTC
+# ADS1115 reference voltage (module powered from 5 V rail via LLC)
+ADC_VCC = 5.0
 
-# ADC supply voltage (Raspberry Pi 3.3 V logic)
-ADC_VCC = 3.3
-
-# Pressure sensor: 4-20 mA type with 100 Ω shunt → 0.40–2.00 V for 0–10 bar
-PRESSURE_V_MIN   = 0.40
-PRESSURE_V_MAX   = 2.00
+# A0 – Pressure: Toyota/Lexus 89458-22010 ratiometric sensor
+# 3-wire, 5 V supply → output 0.5 V (0 bar) to 4.5 V (10 bar)
+PRESSURE_V_MIN   = 0.5
+PRESSURE_V_MAX   = 4.5
 PRESSURE_BAR_MAX = 10.0
 
-# AC voltage sense: step-down transformer + rectifier + divider
-# Adjust VOLTAGE_SCALE so that: ADC_voltage × VOLTAGE_SCALE ≈ true AC RMS volts
-VOLTAGE_SCALE = 80.0
+# A1 – MQ-4 gas sensor analog out (0–5 V proportional to gas concentration)
+# Used for continuous analog concentration reading (digital DO also on GPIO23)
+# Raw voltage is exposed as-is; thresholding done in caller
+MQ4_AO_V_MAX = 5.0   # full-scale reference
+
+# A2 – ZMPT101B AC voltage sensor
+# Calibration: multiply ADC RMS voltage by this scale factor to get AC RMS volts
+# Tune on-site: measure with multimeter and adjust until value matches.
+ZMPT101B_SCALE = 200.0
+
+# A3 – SCT-013 100A CT clamp (current transformer)
+# Burden resistor on ADC input sets sensitivity:
+#   SCT-013-000 (no built-in burden): external 33 Ω → ~0.55 V at 100 A
+#   SCT-013-100 (built-in 100 Ω):    1 V at 100 A → 100 A/V
+# Adjust SCT013_AMPS_PER_VOLT to match your specific SCT-013 variant.
+SCT013_AMPS_PER_VOLT = 100.0  # for SCT-013-100 (built-in burden)
 
 # ── Hardware detection ────────────────────────────────────────────────────────
 HARDWARE_AVAILABLE = False
 _GPIO   = None
 _pwm_choke = None
 
-_chan_pressure = None
-_chan_ntc      = None
-_chan_current  = None
-_chan_voltage  = None
-_ds18b20       = None
+_chan_pressure = None   # ADS1115 A0 – Toyota pressure transducer (ratiometric 0.5–4.5 V)
+_chan_mq4_ao   = None   # ADS1115 A1 – MQ-4 analog concentration output
+_chan_voltage  = None   # ADS1115 A2 – ZMPT101B AC voltage
+_chan_current  = None   # ADS1115 A3 – SCT-013 100 A CT clamp
+_ds18b20       = None   # DS18B20 1-Wire – sole temperature sensor
 
 try:
     import RPi.GPIO as _rpi_gpio
@@ -83,21 +94,21 @@ try:
 
     _i2c = busio.I2C(board.SCL, board.SDA)
     _ads = ADS.ADS1115(_i2c)
-    _chan_pressure = AnalogIn(_ads, 0)
-    _chan_ntc      = AnalogIn(_ads, 1)
-    _chan_current  = AnalogIn(_ads, 2)
-    _chan_voltage  = AnalogIn(_ads, 3)
-    log.info("ADS1115 initialised on I2C (A0=pressure A1=NTC A2=current A3=voltage)")
+    _chan_pressure = AnalogIn(_ads, 0)   # A0 – pressure (ratiometric 0.5–4.5 V)
+    _chan_mq4_ao   = AnalogIn(_ads, 1)   # A1 – MQ-4 analog concentration
+    _chan_voltage  = AnalogIn(_ads, 2)   # A2 – ZMPT101B AC voltage
+    _chan_current  = AnalogIn(_ads, 3)   # A3 – SCT-013 100 A AC current
+    log.info("ADS1115 initialised (A0=pressure A1=MQ4-AO A2=ZMPT101B-voltage A3=SCT013-current)")
 
     try:
         from w1thermsensor import W1ThermSensor
         _ds18b20 = W1ThermSensor()
-        log.info("DS18B20 1-Wire sensor found")
+        log.info("DS18B20 1-Wire sensor found (sole temperature sensor)")
     except Exception as _e:
-        log.warning("DS18B20 not found (%s) — will use NTC thermistor fallback", _e)
+        log.warning("DS18B20 not found (%s) — temperature unavailable (no NTC fallback)", _e)
 
     # ── Output pins ──────────────────────────────────────────────────────────
-    for _pin in (PIN_GAS_SOLENOID, PIN_STARTER, PIN_ENGINE_STOP, PIN_ALARM):
+    for _pin in (PIN_GAS_SOLENOID, PIN_STARTER, PIN_ENGINE_STOP, PIN_SPARE):
         _GPIO.setup(_pin, _GPIO.OUT, initial=_GPIO.LOW)
 
     # Choke servo on GPIO18 — must setup as OUTPUT before creating PWM
@@ -156,29 +167,22 @@ def _read_rpm() -> float:
 
 
 def _read_temperature() -> float:
-    """Return engine temperature in °C.  DS18B20 preferred; NTC as fallback."""
+    """Return engine temperature in °C from DS18B20 (sole temperature sensor)."""
     if _ds18b20 is not None:
         try:
             return round(_ds18b20.get_temperature(), 1)
         except Exception as e:
             log.debug("DS18B20 read error: %s", e)
 
-    if _chan_ntc is not None:
-        try:
-            v = _chan_ntc.voltage
-            if 0.01 < v < ADC_VCC - 0.01:
-                # Voltage divider: Vcc – R_pullup – NTC – GND
-                r_ntc = NTC_R_PULLUP * v / (ADC_VCC - v)
-                t_k   = 1.0 / (1.0 / NTC_T0 + math.log(r_ntc / NTC_R0) / NTC_BETA)
-                return round(t_k - 273.15, 1)
-        except Exception as e:
-            log.debug("NTC read error: %s", e)
-
-    return 25.0  # safe default
+    return 25.0  # safe default — DS18B20 unavailable
 
 
 def _read_pressure() -> float:
-    """Return gas pressure in bar from 4–20 mA sensor on ADS1115 A0."""
+    """Return gas pressure in bar.
+
+    Sensor: Toyota/Lexus 89458-22010 ratiometric transducer on ADS1115 A0.
+    Supply: 5 V → output range 0.5 V (0 bar) to 4.5 V (10 bar).
+    """
     if _chan_pressure is None:
         return 0.0
     try:
@@ -190,27 +194,51 @@ def _read_pressure() -> float:
         return 0.0
 
 
-def _read_current() -> float:
-    """Return AC current in amperes from ACS712-30A on ADS1115 A2."""
-    if _chan_current is None:
+def _read_mq4_analog() -> float:
+    """Return MQ-4 analog concentration as a 0–100 % scale value.
+
+    Sensor: MQ-4 AO (analog out) on ADS1115 A1.  0 V ≈ clean air, 5 V ≈ max.
+    Returned as percentage of full-scale for dashboard display.
+    Digital threshold detection is handled separately via GPIO23 (MQ-4 DO).
+    """
+    if _chan_mq4_ao is None:
         return 0.0
     try:
-        v = _chan_current.voltage
-        return round(abs(v - ACS712_VREF) / ACS712_SENSITIVITY, 1)
+        v = _chan_mq4_ao.voltage
+        return round(max(0.0, min(100.0, (v / MQ4_AO_V_MAX) * 100.0)), 1)
     except Exception as e:
-        log.debug("Current read error: %s", e)
+        log.debug("MQ-4 AO read error: %s", e)
         return 0.0
 
 
 def _read_voltage() -> float:
-    """Return AC RMS voltage from step-down sense circuit on ADS1115 A3."""
+    """Return AC RMS voltage from ZMPT101B sensor on ADS1115 A2.
+
+    Scale factor ZMPT101B_SCALE must be calibrated on-site against a multimeter.
+    """
     if _chan_voltage is None:
         return 0.0
     try:
         v = _chan_voltage.voltage
-        return round(v * VOLTAGE_SCALE, 1)
+        return round(v * ZMPT101B_SCALE, 1)
     except Exception as e:
         log.debug("Voltage read error: %s", e)
+        return 0.0
+
+
+def _read_current() -> float:
+    """Return AC RMS current in amperes from SCT-013 100 A CT clamp on ADS1115 A3.
+
+    SCT013_AMPS_PER_VOLT converts the ADC voltage to current.
+    Calibrate by adjusting burden resistor or SCT013_AMPS_PER_VOLT constant.
+    """
+    if _chan_current is None:
+        return 0.0
+    try:
+        v = _chan_current.voltage
+        return round(max(0.0, v * SCT013_AMPS_PER_VOLT), 1)
+    except Exception as e:
+        log.debug("Current read error: %s", e)
         return 0.0
 
 
@@ -335,7 +363,7 @@ else:
             """Push current relay state from Python attributes to GPIO pins."""
             _set_relay(PIN_STARTER,      self._starter_relay)
             _set_relay(PIN_GAS_SOLENOID, self._gas_solenoid)
-            _set_relay(PIN_ALARM,        self._alarm_buzzer)
+            # PIN_SPARE (GPIO5) is not driven by the state machine — reserved for future use
 
         def _hw_fault(self, reason: str) -> None:
             """Trigger a fault from hardware event, inside caller's lock."""
@@ -379,32 +407,56 @@ else:
                 data["state"]        = "FAULT"
                 data["fault_reason"] = self._fault_reason
 
-            # ── analogue sensors ─────────────────────────────────────────────
+            # ── Strip ALL mock-generated numeric values ───────────────────────
+            # In hardware mode we never want simulated numbers on the dashboard.
+            # Every field below is replaced with a real reading or an explicit 0.
+            for _f in ("rpm", "temp_c", "pressure_bar", "current_a", "voltage_v",
+                        "power_kw", "frequency_hz", "efficiency_pct"):
+                data.pop(_f, None)
+
+            # ── Temperature — always read, all states ────────────────────────
+            data["temp_c"] = _read_temperature()
+
+            # ── MQ-4 analog concentration — always read ───────────────────────
+            data["mq4_concentration_pct"] = _read_mq4_analog()
+
+            # ── RPM & pressure — only meaningful while engine is active ──────
             if state in ("RUNNING", "STARTING", "STOPPING"):
-                rpm = _read_rpm()
-                # Only override mock RPM when we're getting real pulses or running
-                if rpm > 10 or state == "RUNNING":
-                    data["rpm"] = round(rpm, 0)
+                data["rpm"]          = round(_read_rpm(), 0)
+                data["pressure_bar"] = _read_pressure()
+            else:
+                data["rpm"]          = 0.0
+                data["pressure_bar"] = 0.0
 
-                temp = _read_temperature()
-                data["temp_c"] = temp
+            # ── AC current & voltage — only valid while RUNNING ───────────────
+            if state == "RUNNING":
+                current = _read_current()
+                voltage = _read_voltage()
+                data["current_a"] = current
+                data["voltage_v"] = voltage
+                if voltage > 10.0:
+                    pf = 0.85
+                    data["power_kw"]       = round(current * voltage * pf / 1000.0, 2)
+                    data["frequency_hz"]   = round(data["rpm"] / 30.0, 2)
+                    data["efficiency_pct"] = round(35 + 3 * (data["power_kw"] / 10.0), 1)
+                else:
+                    data["current_a"]      = 0.0
+                    data["voltage_v"]      = 0.0
+                    data["power_kw"]       = 0.0
+                    data["frequency_hz"]   = 0.0
+                    data["efficiency_pct"] = 0.0
+            else:
+                data["current_a"]      = 0.0
+                data["voltage_v"]      = 0.0
+                data["power_kw"]       = 0.0
+                data["frequency_hz"]   = 0.0
+                data["efficiency_pct"] = 0.0
 
-                if state == "RUNNING":
-                    data["pressure_bar"] = _read_pressure()
-                    current = _read_current()
-                    voltage = _read_voltage()
-                    data["current_a"] = current
-                    data["voltage_v"] = voltage
+            # ── Release engine-stop relay once engine has fully stopped ───────
+            if state == "STOPPED":
+                _set_relay(PIN_ENGINE_STOP, False)
 
-                    if voltage > 10.0:
-                        pf = 0.85
-                        data["power_kw"]      = round(current * voltage * pf / 1000.0, 2)
-                        data["frequency_hz"]  = round(data["rpm"] / 30.0, 2)
-                        data["efficiency_pct"] = round(
-                            35 + 3 * (data["power_kw"] / 10.0), 1
-                        )
-
-            # Sync relay GPIO after every tick (catches internal SM transitions)
+            # Sync starter + gas solenoid after every tick
             self._sync_relays()
 
             return data
@@ -421,7 +473,8 @@ else:
         def stop_generator(self) -> dict:
             result = super().stop_generator()
             if result.get("success") and not _force_simulation:
-                self._sync_relays()
+                _set_relay(PIN_ENGINE_STOP, True)  # energise stop solenoid (GPIO22)
+                self._sync_relays()                # also cuts starter + gas solenoid
             return result
 
         def estop(self) -> dict:
@@ -430,14 +483,13 @@ else:
                 _set_relay(PIN_STARTER,      False)
                 _set_relay(PIN_GAS_SOLENOID, False)
                 _set_relay(PIN_ENGINE_STOP,  True)
-                _set_relay(PIN_ALARM,        True)
+                # PIN_SPARE is not used for alarm — buzzer removed in Rev 2.0
             return result
 
         def reset_fault(self) -> dict:
             result = super().reset_fault()
             if result.get("success") and not _force_simulation:
                 _set_relay(PIN_ENGINE_STOP, False)
-                _set_relay(PIN_ALARM,       False)
                 _set_choke(100.0)
                 self._sync_relays()
             return result
@@ -448,9 +500,16 @@ else:
                 pin_map = {
                     "starter": PIN_STARTER,
                     "gas":     PIN_GAS_SOLENOID,
-                    "alarm":   PIN_ALARM,
+                    "stop":    PIN_ENGINE_STOP,
+                    "spare":   PIN_SPARE,
                 }
                 pin = pin_map.get(relay)
                 if pin is not None:
                     _set_relay(pin, state)
             return result
+
+        def set_choke_pct(self, pct: float) -> dict:
+            """Set choke servo position via PWM (GPIO18)."""
+            if not _force_simulation:
+                _set_choke(pct)
+            return {"success": True, "message": f"Choke set to {pct:.0f}%", "pct": pct}

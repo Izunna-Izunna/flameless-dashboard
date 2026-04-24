@@ -1,0 +1,15 @@
+name = "flameless-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# ─── Production environment ───────────────────────────────────────────────────
+# BACKEND_URL is the Cloudflare Tunnel public hostname for your Pi.
+# Replace with your actual tunnel hostname after running:
+#   cloudflared tunnel create flameless-pi
+#   cloudflared tunnel route dns flameless-pi <your-hostname>
+#
+# API_TOKEN is a secret — DO NOT put it here.
+# Set it with: wrangler secret put API_TOKEN
+# ─────────────────────────────────────────────────────────────────────────────
+[vars]
+BACKEND_URL = "https://flameless-pi.YOUR_SUBDOMAIN.cfargotunnel.com"

@@ -126,11 +126,17 @@ class EnhancedSensorGenerator:
                 self._starter_relay = state
             elif relay == "gas":
                 self._gas_solenoid = state
-            elif relay == "alarm":
+            elif relay in ("alarm", "spare"):
                 self._alarm_buzzer = state
+            elif relay == "stop":
+                pass   # engine-stop relay (hardware only; no mock state field needed)
             else:
                 return {"success": False, "message": f"Unknown relay: {relay}"}
             return {"success": True, "message": f"{relay} relay set to {'ON' if state else 'OFF'}"}
+
+    def set_choke_pct(self, pct: float) -> dict:
+        """Set choke servo position (simulation: no-op)."""
+        return {"success": True, "message": f"Choke set to {pct:.0f}% (simulation)", "pct": pct}
 
     # ── state machine internals ───────────────────────────────────────────────
     def _go_fault(self):

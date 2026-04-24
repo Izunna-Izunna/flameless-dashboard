@@ -68,6 +68,13 @@ def acknowledge_fault(fault_id: int) -> bool:
     return True
 
 
+def acknowledge_all_faults() -> int:
+    """Mark every unacknowledged fault as acknowledged. Returns count updated."""
+    with _get_conn() as conn:
+        cur = conn.execute("UPDATE faults SET acknowledged=1 WHERE acknowledged=0")
+    return cur.rowcount
+
+
 def get_active_faults() -> list[dict]:
     with _get_conn() as conn:
         rows = conn.execute(

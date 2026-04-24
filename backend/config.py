@@ -12,5 +12,13 @@ SENSOR_INTERVAL = float(os.getenv("SENSOR_INTERVAL", "2.0"))
 # How many historical readings to keep in memory
 HISTORY_SIZE = int(os.getenv("HISTORY_SIZE", "150"))
 
-# CORS – allow the React dev server and production build
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:4173").split(",")
+# CORS – comma-separated list of allowed origins.
+# In production, include your Cloudflare Worker URL:
+#   CORS_ORIGINS=https://flameless-api.YOUR_SUBDOMAIN.workers.dev,https://flameless-dashboard.pages.dev
+# The Worker proxies all requests, so its origin must be listed here.
+_default_origins = ",".join([
+    "http://localhost:3000",
+    "http://localhost:4173",
+    "https://flameless-dashboard.pages.dev",
+])
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", _default_origins).split(",")

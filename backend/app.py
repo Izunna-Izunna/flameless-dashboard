@@ -79,8 +79,9 @@ def _sensor_loop():
 
     while True:
         try:
-            reading = sensor.tick()
+            reading   = sensor.tick()
             new_state = reading["state"]
+            old_state = _prev_state          # capture BEFORE any updates
 
             with _lock:
                 _current = reading
@@ -90,16 +91,16 @@ def _sensor_loop():
             _broadcast(_ws_sensors, payload)
 
             # State change notifications
-            if new_state != _prev_state:
-                log.info("State change: %s → %s", _prev_state, new_state)
-                state_payload = json.dumps({"state": new_state, "previous": _prev_state,
+            if new_state != old_state:
+                log.info("State change: %s → %s", old_state, new_state)
+                state_payload = json.dumps({"state": new_state, "previous": old_state,
                                             "timestamp": reading["timestamp"]})
                 _broadcast(_ws_state, state_payload)
 
                 # Track run sessions
-                if new_state == "RUNNING" and _prev_state == "STARTING":
+                if new_state == "RUNNING" and old_state == "STARTING":
                     _run_id = db.start_run(reading["timestamp"])
-                elif _prev_state == "RUNNING" and new_state in ("STOPPING", "FAULT", "STOPPED"):
+                elif old_state == "RUNNING" and new_state in ("STOPPING", "FAULT", "STOPPED"):
                     if _run_id is not None:
                         db.end_run(_run_id, reading["timestamp"],
                                    sensor.get_run_energy(), reading.get("fuel_m3_used", 0),
@@ -108,9 +109,9 @@ def _sensor_loop():
 
                 _prev_state = new_state
 
-            # Alert broadcasting
+            # Alert broadcasting — only log/broadcast on TRANSITION into FAULT
             alert = reading.get("alert") or reading.get("fault_reason")
-            if alert and new_state == "FAULT":
+            if alert and new_state == "FAULT" and old_state != "FAULT":
                 db.log_fault(alert, None, None, None, new_state)
                 _broadcast(_ws_alerts, json.dumps({"alert": alert, "state": new_state,
                                                     "timestamp": reading["timestamp"]}))
@@ -230,6 +231,59 @@ def alerts_acknowledge():
         return jsonify({"error": "Missing id"}), 400
     db.acknowledge_fault(int(fault_id))
     return jsonify({"success": True})
+
+
+@app.post("/api/alerts/acknowledge-all")
+def alerts_acknowledge_all():
+    count = db.acknowledge_all_faults()
+    return jsonify({"success": True, "acknowledged": count})
+
+
+@app.post("/api/control/choke")
+def control_choke():
+    """Set choke servo position. Body: {pct: 0-100}"""
+    body = request.get_json(silent=True) or {}
+    pct  = float(body.get("pct", 100))
+    pct  = max(0.0, min(100.0, pct))
+    result = sensor.set_choke_pct(pct)
+    return jsonify(result)
+
+
+@app.get("/api/control/gpio-raw")
+def control_gpio_raw():
+    """Return raw GPIO / ADC state for the developer screen."""
+    with _lock:
+        r = dict(_current) if _current else {}
+    try:
+        import gpio_interface as _gi
+        hw = _gi.HARDWARE_AVAILABLE and not _gi._force_simulation
+        return jsonify({
+            "hardware_active": hw,
+            "simulation_mode": _gi._force_simulation,
+            # Relay states from last sensor tick
+            "relay_gas":          r.get("gas_solenoid", False),
+            "relay_starter":      r.get("starter_relay", False),
+            "relay_engine_stop":  r.get("engine_stop_relay", False),
+            "relay_spare":        False,
+            # Live analogue reads (non-null only when HW active)
+            "adc_a0_pressure_bar": _gi._read_pressure()    if hw else None,
+            "adc_a1_mq4_pct":      _gi._read_mq4_analog()  if hw else None,
+            "adc_a2_voltage_v":    _gi._read_voltage()      if hw else None,
+            "adc_a3_current_a":    _gi._read_current()      if hw else None,
+            # Digital inputs
+            "din_estop":           _gi._read_estop_active() if hw else None,
+            "din_gas_leak":        _gi._read_gas_leak()     if hw else None,
+            # DS18B20
+            "ds18b20_c":           _gi._read_temperature()  if hw else None,
+            # RPM
+            "rpm_raw":             _gi._read_rpm()          if hw else None,
+            # State machine state
+            "state": r.get("state", "UNKNOWN"),
+        })
+    except Exception as e:
+        log.error("gpio-raw error: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 
 # ─── REST: diagnostics ────────────────────────────────────────────────────────
 @app.get("/api/diagnostics/health")

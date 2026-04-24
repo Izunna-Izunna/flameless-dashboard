@@ -25,7 +25,7 @@ The same dashboard is accessible from any browser on the local network.
 | GPIO | Direction | Component | Notes |
 |---|---|---|---|
 | 4 | Input (1-Wire) | DS18B20 temperature | kernel driver, not RPi.GPIO |
-| 5 | Output | Alarm buzzer relay | active-HIGH — GPIO HIGH = relay ON |
+| 5 | Output | Spare relay (future expansion) | Rev 2.0: alarm buzzer removed; pin reserved |
 | 17 | Output | Gas solenoid relay | active-HIGH |
 | 18 | Output (PWM 50 Hz) | Choke servo | 5–10 % duty = 0–180° |
 | 22 | Output | Engine-stop solenoid relay | active-HIGH |
@@ -38,13 +38,19 @@ The same dashboard is accessible from any browser on the local network.
 
 | Address | Device | Purpose |
 |---|---|---|
-| 0x48 | ADS1115 (16-bit ADC) | A0 = pressure (Toyota ratiometric 0.5–4.5 V), A1 = MQ-4 AO, A2 = ZMPT101B voltage, A3 = SCT-013 current |
+| 0x48 | ADS1115 (16-bit ADC) | **A0** = Toyota 89458-22010 pressure (ratiometric 0.5–4.5 V on 5 V supply, 0–10 bar) · **A1** = MQ-4 AO analog concentration (0–5 V) · **A2** = ZMPT101B AC voltage · **A3** = SCT-013 100 A CT clamp (AC current) |
 
 ### Relay logic
 All relays are **active-HIGH**: drive GPIO HIGH to energise (ON), GPIO LOW to de-energise (OFF).
 `RELAY_ACTIVE_LOW = False` in `gpio_interface.py`. If you swap to an active-LOW module, flip that flag.
 
 ### ADS1115 note
+The ADS1115 is powered from the 5 V rail (via LLC), so `ADC_VCC = 5.0` in `gpio_interface.py`. All four channels are assigned per wiring diagram v2.0:
+- **A0** – Pressure: Toyota/Lexus 89458-22010 ratiometric sensor (0.5–4.5 V = 0–10 bar)
+- **A1** – MQ-4 AO: analog gas concentration output (0–5 V). Digital threshold also available via GPIO23 (MQ-4 DO).
+- **A2** – ZMPT101B: AC voltage sensor. `ZMPT101B_SCALE` must be calibrated on-site with a multimeter.
+- **A3** – SCT-013 100 A CT clamp: `SCT013_AMPS_PER_VOLT = 100.0` (for SCT-013-100 with built-in burden resistor). Adjust if using SCT-013-000.
+
 The ADS1115 is currently disconnected for initial relay testing. `gpio_interface.py` handles this gracefully — Stage 2 (ADS1115) and Stage 3 (DS18B20) initialisation are wrapped independently so their failure does **not** prevent relay control (Stage 1 GPIO).
 
 ---
@@ -275,10 +281,16 @@ After an E-Stop the engine was at ~80 °C. The pre-start check required temp < 5
 
 **Fix:** Raised pre-check threshold to 90 °C and cooling rates to 0.5 °C/tick (STOPPED) and 1.0 °C/tick (FAULT).
 
-### 5 — Wrong ADS1115 channel assignments
-Original code assigned A1=NTC, A2=ACS712, A3=voltage. The wiring diagram has A0=pressure, A1=MQ-4 AO, A2=ZMPT101B, A3=SCT-013. This caused the NTC thermistor fallback to read gas sensor voltage as temperature.
+### 5 — Wrong ADS1115 channel assignments (Rev 2.0 wiring diagram update)
+Original architecture doc and code assigned A0=pressure(4-20mA), A1=NTC thermistor, A2=ACS712-30A current, A3=step-down voltage. The Rev 2.0 wiring diagram uses different sensors on every analog channel, and the actual installed hardware differs from the original design.
 
-**Fix:** Updated channel assignments in `gpio_interface.py` to match the wiring diagram.
+**Correct assignments per wiring diagram v2.0 (authoritative):**
+- A0: Toyota/Lexus 89458-22010 pressure transducer — ratiometric voltage (0.5–4.5 V), NOT 4-20 mA
+- A1: MQ-4 analog out (0–5 V gas concentration) — NTC thermistor was never installed
+- A2: ZMPT101B AC voltage sensor — replaces original step-down transformer design
+- A3: SCT-013 100 A CT clamp — replaces ACS712-30A hall-effect IC
+
+**Fix:** Updated `gpio_interface.py` — corrected all channel assignments, replaced 4-20 mA pressure math with ratiometric formula, removed NTC thermistor code, replaced ACS712 math with SCT-013 CT calibration, replaced `VOLTAGE_SCALE` with `ZMPT101B_SCALE`. Relay 4 (GPIO5) renamed from `PIN_ALARM` to `PIN_SPARE`; buzzer removed in Rev 2.0.
 
 ### 6 — All relays energising at boot (active-LOW modules)
 For active-LOW relay modules, GPIO LOW = relay ON. Initial state `_GPIO.LOW` was energising all relays (gas valve open, starter running) on every boot.

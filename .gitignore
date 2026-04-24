@@ -11,6 +11,16 @@ frontend/node_modules/
 frontend/dist/
 frontend/*.log
 
+# Worker
+worker/node_modules/
+
+# Secrets — .env.production.local overrides with REAL values (never commit)
+frontend/.env.production.local
+frontend/.env.local
+
+# Cloudflare Tunnel credentials (Pi-local, not committed)
+.cloudflared/*.json
+
 # Data / runtime
 data/
 *.log

@@ -1,0 +1,20 @@
+[Unit]
+Description=Cloudflare Tunnel – FLAMELESS Pi
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/
+After=network-online.target flameless-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flameless
+ExecStart=/usr/local/bin/cloudflared tunnel run flameless-pi
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Graceful shutdown: give cloudflared 10s to drain connections
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
