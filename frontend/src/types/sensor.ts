@@ -15,7 +15,7 @@ export interface SensorReading {
   estop_active: boolean
   starter_relay: boolean
   gas_solenoid: boolean
-  alarm_buzzer: boolean
+  spare_relay: boolean
   uptime_hours: number
   co2_saved_tonnes: number
   fuel_m3_used: number

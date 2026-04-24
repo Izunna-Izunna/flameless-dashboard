@@ -146,7 +146,7 @@ export default function ControlScreen({ current }: Props) {
           </div>
           <RelayRow label="Starter" gpio={22} name="starter" state={current?.starter_relay ?? false} onToggle={(n, v) => handle(() => toggleRelay(n, v))} />
           <RelayRow label="Gas Valve" gpio={27} name="gas" state={current?.gas_solenoid ?? false} onToggle={(n, v) => handle(() => toggleRelay(n, v))} />
-          <RelayRow label="Alarm" gpio={5} name="alarm" state={current?.alarm_buzzer ?? false} onToggle={(n, v) => handle(() => toggleRelay(n, v))} />
+          <RelayRow label="Spare" gpio={5} name="spare" state={current?.spare_relay ?? false} onToggle={(n, v) => handle(() => toggleRelay(n, v))} />
         </div>
       </div>
 

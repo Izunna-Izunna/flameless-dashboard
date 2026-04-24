@@ -74,10 +74,10 @@ The system interfaces with real generator hardware through the Pi's GPIO header:
 ```mermaid
 graph LR
     subgraph "ADS1115 (I2C — 0x48)"
-        A0["A0: Pressure\n4-20mA → 0-10 bar"]
-        A1["A1: NTC Temp\n10K thermistor"]
-        A2["A2: Current\nACS712-30A"]
-        A3["A3: Voltage\nStep-down + rectifier"]
+        A0["A0: Pressure\nToyota 89458-22010 (0.5–4.5V)"]
+        A1["A1: MQ-4 Gas\nAnalog out (0–5V)"]
+        A2["A2: AC Voltage\nZMPT101B"]
+        A3["A3: AC Current\nSCT-013 100A CT"]
     end
 
     subgraph "Digital Inputs"
@@ -90,7 +90,7 @@ graph LR
         G17["GPIO17: Gas Solenoid Relay"]
         G27["GPIO27: Starter Motor Relay"]
         G22["GPIO22: Engine Stop Relay"]
-        G5["GPIO5: Alarm Buzzer Relay"]
+        G5["GPIO5: Spare Relay (future)"]
     end
 
     subgraph "PWM"
@@ -104,18 +104,18 @@ graph LR
 
 | Sensor/Actuator | Interface | Pin/Channel | Calibration |
 |---|---|---|---|
-| Gas Pressure | ADS1115 A0 | I2C | 4-20mA, 100Ω shunt → 0.40–2.00V = 0–10 bar |
-| Engine Temp (NTC) | ADS1115 A1 | I2C | 10KΩ NTC, β=3950, Steinhart–Hart model |
-| AC Current | ADS1115 A2 | I2C | ACS712-30A: 66mV/A, midpoint 2.5V |
-| AC Voltage | ADS1115 A3 | I2C | Step-down transformer × 80 scale factor |
-| Coolant Temp | DS18B20 | 1-Wire (GPIO4) | Direct °C reading (preferred over NTC) |
+| Gas Pressure | ADS1115 A0 | I2C | Toyota 89458-22010 ratiometric: 0.5V (0 bar) – 4.5V (10 bar) |
+| MQ-4 Gas Analog | ADS1115 A1 | I2C | MQ-4 AO: 0–5V proportional to gas concentration |
+| AC Voltage | ADS1115 A2 | I2C | ZMPT101B: scale factor × 200 (calibrate on-site) |
+| AC Current | ADS1115 A3 | I2C | SCT-013 100A CT clamp: 100 A/V (built-in burden) |
+| Coolant Temp | DS18B20 | 1-Wire (GPIO4) | Direct °C reading (sole temperature sensor) |
 | RPM | Hall-effect | GPIO25 | Rising-edge interrupt, 1 pulse/rev |
 | Gas Leak | MQ-4 | GPIO23 | Digital: HIGH = leak detected |
 | E-Stop | NC switch | GPIO24 | Pull-up: HIGH = clear, LOW = pressed |
 | Gas Solenoid | Relay | GPIO17 | HIGH = energised (valve open) |
 | Starter Motor | Relay | GPIO27 | HIGH = cranking |
 | Engine Stop | Relay | GPIO22 | HIGH = shutdown solenoid engaged |
-| Alarm Buzzer | Relay | GPIO5 | HIGH = alarm sounding |
+| Spare Relay | Relay | GPIO5 | Reserved for future expansion (buzzer removed Rev 2.0) |
 | Choke Servo | PWM | GPIO18 | 50Hz servo: 5% = closed, 10% = fully open |
 
 > [!IMPORTANT]
@@ -234,7 +234,7 @@ stateDiagram-v2
         Immediate actions:
         • Starter OFF
         • Gas solenoid OFF
-        • Alarm buzzer ON
+        • Spare relay ON (fault indicator)
         • All electrical → 0
     end note
 ```

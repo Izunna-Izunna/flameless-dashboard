@@ -35,7 +35,7 @@ class EnhancedSensorGenerator:
         self._estop_active = False
         self._starter_relay = False
         self._gas_solenoid = False
-        self._alarm_buzzer = False
+        self._spare_relay = False
 
         # Accumulators
         self._co2_kg = 0.0
@@ -116,7 +116,7 @@ class EnhancedSensorGenerator:
             if self._state != "FAULT":
                 return {"success": False, "message": f"Not in FAULT state (currently {self._state})"}
             self._state = "STOPPED"
-            self._alarm_buzzer = False
+            self._spare_relay = False
             self._fault_reason = None
             return {"success": True, "message": "Fault cleared — ready to start", "state": "STOPPED"}
 
@@ -126,8 +126,8 @@ class EnhancedSensorGenerator:
                 self._starter_relay = state
             elif relay == "gas":
                 self._gas_solenoid = state
-            elif relay in ("alarm", "spare"):
-                self._alarm_buzzer = state
+            elif relay == "spare":
+                self._spare_relay = state
             elif relay == "stop":
                 pass   # engine-stop relay (hardware only; no mock state field needed)
             else:
@@ -144,7 +144,7 @@ class EnhancedSensorGenerator:
         self._state = "FAULT"
         self._starter_relay = False
         self._gas_solenoid = False
-        self._alarm_buzzer = True
+        self._spare_relay = True
         self._voltage_v = 0.0
         self._current_a = 0.0
         self._power_kw = 0.0
@@ -299,7 +299,7 @@ class EnhancedSensorGenerator:
                 "estop_active": self._estop_active,
                 "starter_relay": self._starter_relay,
                 "gas_solenoid": self._gas_solenoid,
-                "alarm_buzzer": self._alarm_buzzer,
+                "spare_relay": self._spare_relay,
                 "uptime_hours": round(self._uptime_hours, 3),
                 "co2_saved_tonnes": round(self._co2_kg / 1000, 4),
                 "fuel_m3_used": round(self._fuel_m3, 3),
