@@ -1,6 +1,6 @@
 import { colors } from '../../styles/theme'
 
-export type Screen = 'home' | 'control' | 'sensors' | 'alerts' | 'stats'
+export type Screen = 'home' | 'control' | 'sensors' | 'alerts' | 'stats' | 'dev'
 
 interface Tab { id: Screen; label: string; icon: string }
 const TABS: Tab[] = [
@@ -9,6 +9,7 @@ const TABS: Tab[] = [
   { id: 'sensors', label: 'Sensors', icon: 'S' },
   { id: 'alerts',  label: 'Alerts',  icon: '!' },
   { id: 'stats',   label: 'Stats',   icon: '%' },
+  { id: 'dev',     label: 'Dev',     icon: '⚙' },
 ]
 
 interface Props {

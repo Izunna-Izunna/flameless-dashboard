@@ -10,6 +10,7 @@ import ControlScreen from './screens/ControlScreen'
 import SensorsScreen from './screens/SensorsScreen'
 import AlertsScreen from './screens/AlertsScreen'
 import StatsScreen from './screens/StatsScreen'
+import DevScreen from './screens/DevScreen'
 
 const BOOT_MESSAGES = [
   'Initialising sensor interface…',
@@ -195,10 +196,11 @@ export default function Dashboard() {
         {screen === 'sensors' && <SensorsScreen current={current} history={history} />}
         {screen === 'alerts'  && <AlertsScreen  current={current} />}
         {screen === 'stats'   && <StatsScreen />}
+        {screen === 'dev'     && <DevScreen />}
       </div>
 
       {/* Scroll buttons — only on screens with scrollable content */}
-      {(screen === 'sensors' || screen === 'alerts' || screen === 'stats') && <ScrollButtons />}
+      {(screen === 'sensors' || screen === 'alerts' || screen === 'stats' || screen === 'dev') && <ScrollButtons />}
 
       {/* Tab navigation */}
       <Navigation active={screen} onChange={setScreen} alertCount={activeAlerts.length} />
